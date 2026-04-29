@@ -451,6 +451,7 @@ export const OpenClawSchema = z
           )
           .optional(),
         extraArgs: z.array(z.string()).optional(),
+        hyprlandCapture: z.boolean().optional(),
       })
       .strict()
       .optional(),
