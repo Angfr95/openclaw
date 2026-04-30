@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { normalizeLowercaseStringOrEmpty } from "../shared/string-coerce.js";
@@ -122,4 +123,44 @@ export function resolveExecutablePath(
   const envPath =
     options?.env?.PATH ?? options?.env?.Path ?? process.env.PATH ?? process.env.Path ?? "";
   return resolveExecutableFromPathEnv(candidate, envPath, options?.env);
+}
+
+const KNOWN_PATHEXT = new Set([".com", ".exe", ".bat", ".cmd"]);
+
+/**
+ * On Windows, resolves a bare command name to its full .cmd or .exe path via
+ * where.exe, so that spawn() never fails with ENOENT when PATHEXT is not
+ * consulted. On non-Windows this is a no-op.
+ */
+export function resolveExecutable(cmd: string): string {
+  if (process.platform !== "win32") {
+    return cmd;
+  }
+  if (KNOWN_PATHEXT.has(normalizeLowercaseStringOrEmpty(path.extname(cmd)))) {
+    return cmd;
+  }
+  try {
+    const output = execFileSync("where.exe", [cmd], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const lines = output
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .filter(Boolean);
+    const cmdLine = lines.find((l) => normalizeLowercaseStringOrEmpty(path.extname(l)) === ".cmd");
+    if (cmdLine) {
+      return cmdLine;
+    }
+    const exeLine = lines.find((l) => normalizeLowercaseStringOrEmpty(path.extname(l)) === ".exe");
+    if (exeLine) {
+      return exeLine;
+    }
+    if (lines[0]) {
+      return lines[0];
+    }
+  } catch {
+    // where.exe unavailable or cmd not found — fall through
+  }
+  return cmd;
 }

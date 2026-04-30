@@ -1,12 +1,20 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { withTempDir } from "../test-helpers/temp-dir.js";
 import {
   isExecutableFile,
+  resolveExecutable,
   resolveExecutableFromPathEnv,
   resolveExecutablePath,
 } from "./executable-path.js";
+
+const { execFileSyncMock } = vi.hoisted(() => ({ execFileSyncMock: vi.fn() }));
+
+vi.mock("node:child_process", async () => {
+  const actual = await vi.importActual<typeof import("node:child_process")>("node:child_process");
+  return { ...actual, execFileSync: execFileSyncMock };
+});
 
 describe("executable path helpers", () => {
   it("detects executable files and rejects directories or non-executables", async () => {
@@ -93,5 +101,62 @@ describe("executable path helpers", () => {
         cwd: String.raw`C:\Users\demo\AI\system\openclaw`,
       }),
     ).toBeUndefined();
+  });
+});
+
+describe("resolveExecutable", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    execFileSyncMock.mockReset();
+  });
+
+  it("returns cmd unchanged on non-Windows platforms", () => {
+    const platformSpy = vi.spyOn(process, "platform", "get").mockReturnValue("linux");
+    expect(resolveExecutable("gcloud")).toBe("gcloud");
+    expect(execFileSyncMock).not.toHaveBeenCalled();
+    platformSpy.mockRestore();
+  });
+
+  it("returns cmd unchanged when it already carries a known PATHEXT extension on Windows", () => {
+    const platformSpy = vi.spyOn(process, "platform", "get").mockReturnValue("win32");
+    expect(resolveExecutable("gcloud.cmd")).toBe("gcloud.cmd");
+    expect(resolveExecutable("gcloud.exe")).toBe("gcloud.exe");
+    expect(resolveExecutable("gcloud.bat")).toBe("gcloud.bat");
+    expect(resolveExecutable("gcloud.com")).toBe("gcloud.com");
+    expect(execFileSyncMock).not.toHaveBeenCalled();
+    platformSpy.mockRestore();
+  });
+
+  it("resolves to the first .cmd result from where.exe on Windows", () => {
+    const platformSpy = vi.spyOn(process, "platform", "get").mockReturnValue("win32");
+    execFileSyncMock.mockReturnValue(
+      "C:\\Cloud\\bin\\gcloud.cmd\r\nC:\\Cloud\\bin\\gcloud.exe\r\n",
+    );
+    expect(resolveExecutable("gcloud")).toBe("C:\\Cloud\\bin\\gcloud.cmd");
+    expect(execFileSyncMock).toHaveBeenCalledWith("where.exe", ["gcloud"], expect.anything());
+    platformSpy.mockRestore();
+  });
+
+  it("falls back to .exe when where.exe returns no .cmd match on Windows", () => {
+    const platformSpy = vi.spyOn(process, "platform", "get").mockReturnValue("win32");
+    execFileSyncMock.mockReturnValue("C:\\ts\\bin\\tailscale.exe\r\n");
+    expect(resolveExecutable("tailscale")).toBe("C:\\ts\\bin\\tailscale.exe");
+    platformSpy.mockRestore();
+  });
+
+  it("falls back to first result when where.exe returns no .cmd or .exe match on Windows", () => {
+    const platformSpy = vi.spyOn(process, "platform", "get").mockReturnValue("win32");
+    execFileSyncMock.mockReturnValue("C:\\Tools\\gcloud\\gcloud\r\n");
+    expect(resolveExecutable("gcloud")).toBe("C:\\Tools\\gcloud\\gcloud");
+    platformSpy.mockRestore();
+  });
+
+  it("returns original cmd when where.exe throws on Windows", () => {
+    const platformSpy = vi.spyOn(process, "platform", "get").mockReturnValue("win32");
+    execFileSyncMock.mockImplementation(() => {
+      throw new Error("INFO: Could not find files for the given pattern(s).");
+    });
+    expect(resolveExecutable("gog")).toBe("gog");
+    platformSpy.mockRestore();
   });
 });

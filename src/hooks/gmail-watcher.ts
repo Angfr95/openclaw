@@ -8,6 +8,7 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { hasBinary } from "../agents/skills.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import { resolveExecutable } from "../infra/executable-path.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import { runCommandWithTimeout } from "../process/exec.js";
 import { ensureTailscaleEndpoint } from "./gmail-setup-utils.js";
@@ -26,6 +27,7 @@ let watcherProcess: ChildProcess | null = null;
 let renewInterval: ReturnType<typeof setInterval> | null = null;
 let shuttingDown = false;
 let currentConfig: GmailHookRuntimeConfig | null = null;
+let gogBin: string | undefined;
 
 /**
  * Check if gog binary is available
@@ -40,7 +42,7 @@ function isGogAvailable(): boolean {
 async function startGmailWatch(
   cfg: Pick<GmailHookRuntimeConfig, "account" | "label" | "topic">,
 ): Promise<boolean> {
-  const args = ["gog", ...buildGogWatchStartArgs(cfg)];
+  const args = [(gogBin ??= resolveExecutable("gog")), ...buildGogWatchStartArgs(cfg)];
   try {
     const result = await runCommandWithTimeout(args, { timeoutMs: 120_000 });
     if (result.code !== 0) {
@@ -64,7 +66,7 @@ function spawnGogServe(cfg: GmailHookRuntimeConfig): ChildProcess {
   log.info(`starting gog ${buildGogWatchServeLogArgs(cfg).join(" ")}`);
   let addressInUse = false;
 
-  const child = spawn("gog", args, {
+  const child = spawn((gogBin ??= resolveExecutable("gog")), args, {
     stdio: ["ignore", "pipe", "pipe"],
     detached: false,
   });
